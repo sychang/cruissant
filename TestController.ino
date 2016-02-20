@@ -1,5 +1,10 @@
 /*********************************************************************
- This is an example for our nRF51822 based Bluefruit LE modules
+ * Critical Making Neck Pillow Team
+ * Feather Bluefruit code to send proximity to present GPS coordinates
+ * (also takes in controller button presses for demo purposes)
+ * 
+ This is built upon an example from Adafruit for their 
+ nRF51822 based Bluefruit LE modules:
 
  Pick one up today in the adafruit shop!
 
@@ -95,6 +100,12 @@ void printHex(const uint8_t * data, const uint32_t numBytes);
 // the packet buffer
 extern uint8_t packetbuffer[];
 
+// preset GPS coordinates for four points
+// currently Berkeley, San Francisco Golden Gate Bridge, the Eiffel Tower, and the South Pole
+float gpsx[4] = {37.8759, 37.8197, 48.8582, -90.0000};
+float gpsy[4] = {-122.259, -122.4786, 2.2946, 0.0000};
+float threshold = 0.01; // x and y proximity for being "in the zone"
+int gps_zone_old = 0, gps_zone_new = 0; // 0 or 1-4 when inside a zone
 
 /**************************************************************************/
 /*!
@@ -108,39 +119,14 @@ void setup(void)
   delay(500);
 
   Serial.begin(115200);
-  Serial.println(F("Adafruit Bluefruit App Controller Example"));
-  Serial.println(F("-----------------------------------------"));
-
-  /* Initialise the module */
-  Serial.print(F("Initialising the Bluefruit LE module: "));
 
   if ( !ble.begin(VERBOSE_MODE) )
   {
     error(F("Couldn't find Bluefruit, make sure it's in CoMmanD mode & check wiring?"));
   }
-  Serial.println( F("OK!") );
-
-  if ( FACTORYRESET_ENABLE )
-  {
-    /* Perform a factory reset to make sure everything is in a known state */
-    Serial.println(F("Performing a factory reset: "));
-    if ( ! ble.factoryReset() ){
-      error(F("Couldn't factory reset"));
-    }
-  }
-
 
   /* Disable command echo from Bluefruit */
   ble.echo(false);
-
-  Serial.println("Requesting Bluefruit info:");
-  /* Print Bluefruit information */
-  ble.info();
-
-  Serial.println(F("Please use Adafruit Bluefruit LE app to connect in Controller mode"));
-  Serial.println(F("Then activate/use the sensors, color picker, game controller, etc!"));
-  Serial.println();
-
   ble.verbose(false);  // debug info is a little annoying after this point!
 
   /* Wait for connection */
@@ -148,21 +134,22 @@ void setup(void)
       delay(500);
   }
 
-  Serial.println(F("******************************"));
+  // un-comment for debugging
+  //Serial.println(F("Bluefruit Connected"));
+  //Serial.println(F("******************************"));
 
   // LED Activity command is only supported from 0.6.6
   if ( ble.isVersionAtLeast(MINIMUM_FIRMWARE_VERSION) )
   {
     // Change Mode LED Activity
-    Serial.println(F("Change LED activity to " MODE_LED_BEHAVIOUR));
     ble.sendCommandCheckOK("AT+HWModeLED=" MODE_LED_BEHAVIOUR);
   }
 
   // Set Bluefruit to DATA mode
-  Serial.println( F("Switching to DATA mode!") );
   ble.setMode(BLUEFRUIT_MODE_DATA);
 
-  Serial.println(F("******************************"));
+  // debug LED, enabled/disabled by buttons 1 & 2
+  pinMode(13, OUTPUT);
 
 }
 
@@ -181,11 +168,20 @@ void loop(void)
   if (packetbuffer[1] == 'B') {
     uint8_t buttnum = packetbuffer[2] - '0';
     boolean pressed = packetbuffer[3] - '0';
-    Serial.print ("Button "); Serial.print(buttnum);
-    if (pressed) {
-      Serial.println(" pressed");
-    } else {
-      Serial.println(" released");
+    // print button number to Raspberry Pi (if 1-4)
+    if (pressed && buttnum > 0 && buttnum < 5) {
+      Serial.print(buttnum);
+    } else if (pressed && buttnum > 4 && buttnum < 9) {
+      // send 0 to simulate leaving zone for arrow buttons 5-8
+      Serial.print(0);
+    }
+
+    // for debug LED
+    if (buttnum == 1) {
+      digitalWrite(13, HIGH); // reference LED    
+    }
+    if (buttnum == 2) {
+      digitalWrite(13, LOW);    
     }
   }
 
@@ -195,24 +191,20 @@ void loop(void)
     lat = parsefloat(packetbuffer+2);
     lon = parsefloat(packetbuffer+6);
     alt = parsefloat(packetbuffer+10);
-    Serial.print("GPS Location\t");
-    Serial.print("Lat: "); Serial.print(lat, 4); // 4 digits of precision!
-    Serial.print('\t');
-    Serial.print("Lon: "); Serial.print(lon, 4); // 4 digits of precision!
-    Serial.print('\t');
-    Serial.print(alt, 4); Serial.println(" meters");
+    
+    // check proximity to each GPS preset
+    gps_zone_new = 0;
+    for (int i=0; i<4; i++) {
+      if ((fabs(lat-gpsx[i])<threshold) && (fabs(lon-gpsx[i])<threshold)) {
+        gps_zone_new = i+1;
+      }
+    }
+    if ((gps_zone_old > 0) && (gps_zone_new == 0)) {
+      // leaving a zone, send 0
+      Serial.print(0);
+    } else if ((gps_zone_new > 0) && (gps_zone_new != gps_zone_old)) {
+      // entering a zone, send zone number
+      Serial.print(gps_zone_new);
+    }
   }
-
-  // Accelerometer
-  if (packetbuffer[1] == 'A') {
-    float x, y, z;
-    x = parsefloat(packetbuffer+2);
-    y = parsefloat(packetbuffer+6);
-    z = parsefloat(packetbuffer+10);
-    Serial.print("Accel\t");
-    Serial.print(x); Serial.print('\t');
-    Serial.print(y); Serial.print('\t');
-    Serial.print(z); Serial.println();
-  }
-
 }
